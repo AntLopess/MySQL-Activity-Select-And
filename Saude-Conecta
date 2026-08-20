@@ -1,0 +1,363 @@
+-- PROJETO: SaudeConecta
+
+-- FASE 2: IMPLEMENTACAO FISICA (DDL)
+
+-- Criacao do banco de dados
+DROP DATABASE IF EXISTS saude_conecta;
+CREATE DATABASE saude_conecta CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE saude_conecta;
+
+-- Tabela: Especialidades
+-- Entidade "1" independente. Um medico pertence a uma especialidade (1:N).
+
+CREATE TABLE especialidades (
+    idespecialidade INT AUTO_INCREMENT PRIMARY KEY,
+    nome            VARCHAR(100) NOT NULL,
+    descricao       TEXT
+) ENGINE=InnoDB;
+
+-- Tabela: Convenio
+-- Entidade independente. Um convenio pode ser usado por N pacientes (1:N).
+
+CREATE TABLE convenio (
+    idconvenio      INT AUTO_INCREMENT PRIMARY KEY,
+    operadora       VARCHAR(100) NOT NULL,
+    plano           VARCHAR(50),
+    numerocarteira  VARCHAR(30),
+    validade        DATE
+) ENGINE=InnoDB;
+
+-- Tabela: Medico
+-- 1 Especialidade : N Medicos
+
+CREATE TABLE medico (
+    idmedico        INT AUTO_INCREMENT PRIMARY KEY,
+    nome            VARCHAR(100) NOT NULL,
+    telefone        VARCHAR(20),
+    email           VARCHAR(100),
+    crm             VARCHAR(20) NOT NULL,
+    idespecialidade INT NOT NULL,
+    CONSTRAINT uq_medico_crm UNIQUE (crm),
+    CONSTRAINT fk_medico_especialidade
+        FOREIGN KEY (idespecialidade) REFERENCES especialidades(idespecialidade)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Tabela: Paciente
+-- 1 Convenio : N Pacientes
+
+CREATE TABLE paciente (
+    idpaciente      INT AUTO_INCREMENT PRIMARY KEY,
+    nome            VARCHAR(100) NOT NULL,
+    datanascimento  DATE NOT NULL,
+    telefone        VARCHAR(20),
+    email           VARCHAR(100),
+    endereco        VARCHAR(255),
+    cpf             CHAR(11) NOT NULL,
+    idconvenio      INT,
+    CONSTRAINT uq_paciente_cpf UNIQUE (cpf),
+    CONSTRAINT fk_paciente_convenio
+        FOREIGN KEY (idconvenio) REFERENCES convenio(idconvenio)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Tabela: Agenda
+-- 1 Medico : N Horarios de Agenda
+
+CREATE TABLE agenda (
+    idagenda        INT AUTO_INCREMENT PRIMARY KEY,
+    data            DATE NOT NULL,
+    horario         TIME NOT NULL,
+    disponibilidade BOOLEAN NOT NULL DEFAULT TRUE,
+    idmedico        INT NOT NULL,
+    CONSTRAINT fk_agenda_medico
+        FOREIGN KEY (idmedico) REFERENCES medico(idmedico)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Tabela: Consulta
+-- Liga Paciente (N:1), Medico (N:1) e Convenio (N:1).
+-- Coluna "anotacoes_prontuario" adicionada para viabilizar a trigger de
+-- auditoria de prontuario exigida na Fase 4 (nao consta no DER original).
+
+CREATE TABLE consulta (
+    idconsulta            INT AUTO_INCREMENT PRIMARY KEY,
+    dataconsulta           DATE NOT NULL,
+    horaconsulta           TIME NOT NULL,
+    status                 VARCHAR(20) NOT NULL DEFAULT 'AGENDADA',
+    observacoes            TEXT,
+    anotacoes_prontuario   TEXT,
+    idpaciente             INT NOT NULL,
+    idmedico               INT NOT NULL,
+    idconvenio             INT,
+    CONSTRAINT fk_consulta_paciente
+        FOREIGN KEY (idpaciente) REFERENCES paciente(idpaciente)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_consulta_medico
+        FOREIGN KEY (idmedico) REFERENCES medico(idmedico)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_consulta_convenio
+        FOREIGN KEY (idconvenio) REFERENCES convenio(idconvenio)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Tabela: Exame
+-- 1 Paciente : N Exames  /  1 Medico : N Exames
+
+CREATE TABLE exame (
+    idexame     INT AUTO_INCREMENT PRIMARY KEY,
+    tipo        VARCHAR(100) NOT NULL,
+    resultado   TEXT,
+    dataexame   DATE NOT NULL,
+    idpaciente  INT NOT NULL,
+    idmedico    INT NOT NULL,
+    CONSTRAINT fk_exame_paciente
+        FOREIGN KEY (idpaciente) REFERENCES paciente(idpaciente)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_exame_medico
+        FOREIGN KEY (idmedico) REFERENCES medico(idmedico)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Tabela: Prescricao
+-- 1 Consulta : N Prescricoes
+
+CREATE TABLE prescricao (
+    idprescricao    INT AUTO_INCREMENT PRIMARY KEY,
+    dataprescricao  DATE NOT NULL,
+    observacoes     TEXT,
+    idconsulta      INT NOT NULL,
+    CONSTRAINT fk_prescricao_consulta
+        FOREIGN KEY (idconsulta) REFERENCES consulta(idconsulta)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Tabela: Medicamento
+-- 1 Prescricao : N Medicamentos
+
+CREATE TABLE medicamento (
+    idmedicamento   INT AUTO_INCREMENT PRIMARY KEY,
+    nome            VARCHAR(100) NOT NULL,
+    dosagem         VARCHAR(50),
+    frequencia      VARCHAR(50),
+    duracao         VARCHAR(50),
+    idprescricao    INT NOT NULL,
+    CONSTRAINT fk_medicamento_prescricao
+        FOREIGN KEY (idprescricao) REFERENCES prescricao(idprescricao)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+-- Tabela: Pagamento
+-- 1 Consulta : 1 Pagamento. Constraint CHECK garante valor nunca negativo.
+
+CREATE TABLE pagamento (
+    idpagamento     INT AUTO_INCREMENT PRIMARY KEY,
+    valor           DECIMAL(10,2) NOT NULL,
+    formapagamento  VARCHAR(30),
+    datapagamento   DATE,
+    status          VARCHAR(20) NOT NULL DEFAULT 'PENDENTE',
+    idconsulta      INT NOT NULL,
+    CONSTRAINT uq_pagamento_consulta UNIQUE (idconsulta),
+    CONSTRAINT chk_pagamento_valor CHECK (valor >= 0),
+    CONSTRAINT fk_pagamento_consulta
+        FOREIGN KEY (idconsulta) REFERENCES consulta(idconsulta)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+
+-- FASE 3: INSERCAO DE DADOS (DML) E CONSULTAS DE NEGOCIO (DQL)
+
+-- 3.1 DML - Insercao de registros
+
+INSERT INTO especialidades (nome, descricao) VALUES
+('Cardiologia', 'Cuidados com o coracao e sistema circulatorio'),
+('Dermatologia', 'Cuidados com a pele'),
+('Pediatria', 'Cuidados medicos infantis'),
+('Ortopedia', 'Cuidados com ossos e articulacoes'),
+('Clinica Geral', 'Atendimento clinico geral');
+
+INSERT INTO convenio (operadora, plano, numerocarteira, validade) VALUES
+('Unimed', 'Basico', '1111000011', '2027-01-31'),
+('Bradesco Saude', 'Premium', '2222000022', '2026-12-31'),
+('SulAmerica', 'Executivo', '3333000033', '2027-06-30'),
+('Amil', 'Standard', '4444000044', '2026-09-30'),
+('Particular', 'N/A', NULL, NULL);
+
+INSERT INTO medico (nome, telefone, email, crm, idespecialidade) VALUES
+('Dr. Carlos Silva', '(31) 99999-0001', 'carlos.silva@saudeconecta.com', 'CRM12345', 1),
+('Dra. Ana Souza', '(31) 99999-0002', 'ana.souza@saudeconecta.com', 'CRM12346', 2),
+('Dr. Pedro Lima', '(31) 99999-0003', 'pedro.lima@saudeconecta.com', 'CRM12347', 3),
+('Dra. Maria Costa', '(31) 99999-0004', 'maria.costa@saudeconecta.com', 'CRM12348', 4),
+('Dr. Joao Pereira', '(31) 99999-0005', 'joao.pereira@saudeconecta.com', 'CRM12349', 5);
+
+INSERT INTO paciente (nome, datanascimento, telefone, email, endereco, cpf, idconvenio) VALUES
+('Mariana Alves', '1990-05-14', '(31) 98888-0001', 'mariana.alves@email.com', 'Rua A, 100 - BH/MG', '11111111111', 1),
+('Ricardo Nunes', '1985-11-02', '(31) 98888-0002', 'ricardo.nunes@email.com', 'Rua B, 200 - BH/MG', '22222222222', 2),
+('Fernanda Dias', '2001-02-20', '(31) 98888-0003', 'fernanda.dias@email.com', 'Rua C, 300 - BH/MG', '33333333333', 3),
+('Bruno Martins', '1978-08-09', '(31) 98888-0004', 'bruno.martins@email.com', 'Rua D, 400 - BH/MG', '44444444444', 4),
+('Camila Rocha', '1995-03-30', '(31) 98888-0005', 'camila.rocha@email.com', 'Rua E, 500 - BH/MG', '55555555555', 5);
+
+INSERT INTO agenda (data, horario, disponibilidade, idmedico) VALUES
+(CURDATE(), '08:00:00', FALSE, 1),
+(CURDATE(), '09:00:00', TRUE, 2),
+(CURDATE(), '10:00:00', FALSE, 3),
+(CURDATE(), '11:00:00', TRUE, 4),
+(CURDATE(), '14:00:00', FALSE, 5);
+
+INSERT INTO consulta (dataconsulta, horaconsulta, status, observacoes, anotacoes_prontuario, idpaciente, idmedico, idconvenio) VALUES
+(CURDATE(), '08:00:00', 'REALIZADA', 'Consulta de rotina', 'Paciente estavel, sem queixas relevantes.', 1, 1, 1),
+(CURDATE(), '09:00:00', 'REALIZADA', 'Avaliacao dermatologica', 'Lesao benigna identificada.', 2, 2, 2),
+(CURDATE(), '10:00:00', 'AGENDADA', 'Consulta pediatrica', NULL, 3, 3, 3),
+(CURDATE(), '11:00:00', 'REALIZADA', 'Dor no joelho', 'Suspeita de lesao no menisco.', 4, 4, 4),
+(CURDATE(), '14:00:00', 'CANCELADA', 'Paciente nao compareceu', NULL, 5, 5, 5);
+
+INSERT INTO exame (tipo, resultado, dataexame, idpaciente, idmedico) VALUES
+('Eletrocardiograma', 'Ritmo sinusal normal', CURDATE(), 1, 1),
+('Biopsia de pele', 'Sem alteracoes malignas', CURDATE(), 2, 2),
+('Hemograma completo', 'Valores dentro da normalidade', CURDATE(), 3, 3),
+('Raio-X do joelho', 'Leve desgaste articular', CURDATE(), 4, 4),
+('Exame de rotina', 'Sem alteracoes', CURDATE(), 5, 5);
+
+INSERT INTO prescricao (dataprescricao, observacoes, idconsulta) VALUES
+(CURDATE(), 'Uso continuo', 1),
+(CURDATE(), 'Aplicar topicamente', 2),
+(CURDATE(), 'Retorno em 30 dias', 4),
+(CURDATE(), 'Uso conforme necessidade', 1),
+(CURDATE(), 'Observar reacoes adversas', 4);
+
+INSERT INTO medicamento (nome, dosagem, frequencia, duracao, idprescricao) VALUES
+('Losartana', '50mg', '1x ao dia', '30 dias', 1),
+('Pomada Dermatologica X', 'Aplicar fina camada', '2x ao dia', '15 dias', 2),
+('Ibuprofeno', '400mg', '2x ao dia', '7 dias', 3),
+('Paracetamol', '750mg', 'se necessario', '5 dias', 4),
+('Complexo Vitaminico', '1 comprimido', '1x ao dia', '60 dias', 5);
+
+INSERT INTO pagamento (valor, formapagamento, datapagamento, status, idconsulta) VALUES
+(150.00, 'Convenio', CURDATE(), 'PAGO', 1),
+(200.00, 'Cartao de Credito', CURDATE(), 'PAGO', 2),
+(120.00, 'Convenio', CURDATE(), 'PENDENTE', 3),
+(180.00, 'Pix', CURDATE(), 'PAGO', 4),
+(100.00, 'Dinheiro', CURDATE(), 'ESTORNADO', 5);
+
+-- 3.2 DQL - Consultas de negocio
+ 
+-- 1) Busca Multipla: paciente, data da consulta, medico e especialidade
+--    apenas para consultas realizadas no ano atual.
+
+SELECT
+    p.nome            AS 'Paciente',
+    c.dataconsulta    AS 'Data da Consulta',
+    m.nome            AS 'Médico',
+    e.nome            AS 'Especialidade'
+FROM consulta c
+JOIN paciente p        ON p.idpaciente = c.idpaciente
+JOIN medico m          ON m.idmedico   = c.idmedico
+JOIN especialidades e  ON e.idespecialidade = m.idespecialidade
+WHERE YEAR(c.dataconsulta) = YEAR(CURDATE());
+ 
+ -- 2) Agregacao: total de receita por especialidade, da maior para a menor.
+
+SELECT
+    e.nome AS Especialidade,
+    SUM(pg.valor) AS Total_Receita
+FROM pagamento pg
+JOIN consulta c        ON c.idconsulta = pg.idconsulta
+JOIN medico m          ON m.idmedico   = c.idmedico
+JOIN especialidades e  ON e.idespecialidade = m.idespecialidade
+GROUP BY e.nome
+ORDER BY Total_Receita DESC;
+
+-- 3) Left Join: todos os medicos e, quando houver, a data da consulta.
+--    Medicos sem consultas tambem aparecem na lista.
+
+SELECT
+    m.nome AS 'Médico',
+    c.dataconsulta AS 'Data da Consulta'
+FROM medico m
+LEFT JOIN consulta c ON c.idmedico = m.idmedico;
+
+
+-- FASE 4: PROGRAMACAO DE BANCO DE DADOS (VIEWS E TRIGGERS)
+
+
+-- 4.1 View de Prontuario: une paciente, consultas e exames.
+
+CREATE OR REPLACE VIEW vw_historico_paciente AS
+SELECT
+    p.idpaciente,
+    p.nome              AS nome_paciente,
+    c.idconsulta,
+    c.dataconsulta,
+    c.status            AS status_consulta,
+    c.observacoes        AS observacoes_consulta,
+    m.nome              AS nome_medico,
+    ex.idexame,
+    ex.tipo             AS tipo_exame,
+    ex.resultado        AS resultado_exame,
+    ex.dataexame
+FROM paciente p
+LEFT JOIN consulta c ON c.idpaciente = p.idpaciente
+LEFT JOIN medico m   ON m.idmedico   = c.idmedico
+LEFT JOIN exame ex   ON ex.idpaciente = p.idpaciente;
+
+-- 4.2 Tabela de Auditoria + Trigger
+--     Registra alteracoes no campo sensivel "anotacoes_prontuario" da tabela
+--     consulta, guardando o texto antigo, a data/hora e o ID da consulta.
+
+CREATE TABLE log_auditoria_prontuario (
+    idlog               INT AUTO_INCREMENT PRIMARY KEY,
+    idconsulta           INT NOT NULL,
+    texto_antigo         TEXT,
+    data_hora_alteracao  DATETIME NOT NULL,
+    CONSTRAINT fk_log_consulta
+        FOREIGN KEY (idconsulta) REFERENCES consulta(idconsulta)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+DELIMITER //
+
+CREATE TRIGGER trg_auditoria_prontuario
+AFTER UPDATE ON consulta
+FOR EACH ROW
+BEGIN
+    IF (NOT (OLD.anotacoes_prontuario <=> NEW.anotacoes_prontuario)) THEN
+        INSERT INTO log_auditoria_prontuario (idconsulta, texto_antigo, data_hora_alteracao)
+        VALUES (OLD.idconsulta, OLD.anotacoes_prontuario, NOW());
+    END IF;
+END;
+//
+
+DELIMITER ;
+
+
+-- FASE 5: SEGURANCA E TRANSACOES (DCL E TCL)
+
+
+-- 5.1 DCL - Controle de acesso (LGPD)
+--     usuario_gestor: apenas leitura (SELECT) nas views de relatorio,
+--     sem acesso direto as tabelas de pacientes e exames.
+
+CREATE USER IF NOT EXISTS 'usuario_gestor'@'localhost' IDENTIFIED BY 'SenhaForte#2026';
+
+-- Acesso somente as views de relatorio (nao as tabelas base)
+GRANT SELECT ON saude_conecta.vw_historico_paciente TO 'usuario_gestor'@'localhost';
+
+FLUSH PRIVILEGES;
+
+
+-- 5.2 TCL - Transacao: cancelamento de consulta com devolucao financeira
+
+START TRANSACTION;
+
+    UPDATE consulta
+    SET status = 'CANCELADA'
+    WHERE idconsulta = 3;
+
+    INSERT INTO devolucao_financeira (idconsulta, valordevolvido, datadevolucao, motivo)
+    VALUES (3, 120.00, CURDATE(), 'Cancelamento de consulta a pedido do paciente');
+
+
+COMMIT;
+
+
+-- FIM DO SCRIPT
